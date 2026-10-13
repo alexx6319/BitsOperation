@@ -112,9 +112,34 @@
             color: #ff0000;
             font-weight: 900;
             background-color: #ffdddd;
-            font-size: 1.5em; 
+            font-size: 1.5em;
         }
-        
+
+        /* 位移操作標示：被移動 / 被移出 / 補 0 的位元 */
+        .moved-bit {
+            background-color: #fff3b0;
+        }
+        .shifted-out-bit {
+            background-color: #e0e0e0;
+            color: #999;
+            text-decoration: line-through;
+        }
+        .filled-zero-bit {
+            background-color: #cfe5ff;
+            color: #0056b3;
+        }
+        .bit-legend {
+            margin: 10px 0;
+        }
+        .bit-legend span {
+            display: inline-block;
+            margin-right: 15px;
+            padding: 4px 10px;
+            border: 2px solid #666;
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+
         /* 縮小功能區塊之間的間距 */
         .output-section {
             margin-bottom: 15px; 
@@ -288,7 +313,8 @@
         }
 
         // 輔助函數：生成位元表格的 HTML (超過 32 位元時分成多列，每格寬度固定)
-        function createBitTableHTML(binaryString, highlightIndex = -1) {
+        // getCellClass(index) 可選，依字串索引回傳該格的額外 class
+        function createBitTableHTML(binaryString, highlightIndex = -1, getCellClass = null) {
             const bitLength = binaryString.length;
             let html = '';
 
@@ -304,8 +330,10 @@
                 bitTable += '</tr><tr>';
                 // 輸出位元值 (Bit Value)
                 rowBits.split('').forEach((bit, i) => {
-                    const isHighlight = rowStart + i === highlightIndex;
-                    const className = isHighlight ? 'changed-bit' : '';
+                    const index = rowStart + i;
+                    const className = index === highlightIndex
+                        ? 'changed-bit'
+                        : (getCellClass ? getCellClass(index) : '');
                     bitTable += `<td class="${className}">${bit}</td>`;
                 });
                 bitTable += '</tr></table>';
@@ -474,12 +502,32 @@
             const directionText = direction === 'left' ? '左' : '右';
             const operator = direction === 'left' ? '<<' : '>>';
 
+            // 標示各格狀態 (字串索引 0 為最高位元)：
+            // Before：被移出的位元 / 被移動的位元；After：移動後的位元 / 補 0 的位元
+            const keptLength = bitLength - shiftAmount;
+            const movedClass = shiftAmount > 0 ? 'moved-bit' : '';
+            const getBeforeClass = direction === 'left'
+                ? i => (i < shiftAmount ? 'shifted-out-bit' : movedClass)
+                : i => (i >= keptLength ? 'shifted-out-bit' : movedClass);
+            const getAfterClass = direction === 'left'
+                ? i => (i >= keptLength ? 'filled-zero-bit' : movedClass)
+                : i => (i < shiftAmount ? 'filled-zero-bit' : movedClass);
+
+            const legendHTML = shiftAmount > 0 ? `
+                <div class="bit-legend">
+                    <span class="moved-bit">被移動的位元</span>
+                    <span class="shifted-out-bit">被移出 (捨棄) 的位元</span>
+                    <span class="filled-zero-bit">補 0 的位元</span>
+                </div>
+            ` : '';
+
             const contentHTML = `
+                ${legendHTML}
                 <div class="binary-value">**Before - 位移前二進位:**</div>
-                ${createBitTableHTML(previousBinary)}
+                ${createBitTableHTML(previousBinary, -1, getBeforeClass)}
                 ${valueSummaryHTML(previousBinary, 'Before ')}
                 <div class="binary-value">**After - ${operator} ${shiftAmount} 位後二進位:**</div>
-                ${createBitTableHTML(newBinary)}
+                ${createBitTableHTML(newBinary, -1, getAfterClass)}
                 ${valueSummaryHTML(newBinary, 'After ')}
                 <p>✅ 數值已向${directionText}移位 ${shiftAmount} 位。</p>
             `;
