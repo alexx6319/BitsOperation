@@ -87,18 +87,17 @@
         }
 
         /* 位元表格樣式 - 保持最大可讀性 */
+        /* 表格寬度由程式依位元數設定 (每列最多 32 格)，使各寬度的格子大小一致 */
         .bit-table {
             border-collapse: collapse;
-            width: 100%;
-            margin: 25px 0; 
-            table-layout: fixed; 
+            margin: 25px 0;
+            table-layout: fixed;
         }
         .bit-table th, .bit-table td {
             border: 2px solid #666;
-            padding: 10px 0; 
+            padding: 10px 0;
             text-align: center;
             font-family: monospace;
-            width: calc(100% / 32); 
         }
         .bit-table th {
             font-size: 1.1em;
@@ -136,6 +135,14 @@
             <option value="2">二進位</option>
             <option value="10">十進位</option>
             <option value="16" selected>十六進位</option>
+        </select>
+        <br>
+        <label for="bitWidth">請選擇位元寬度:</label>
+        <select id="bitWidth" onchange="changeBitWidth()">
+            <option value="8">8 bit</option>
+            <option value="16">16 bit</option>
+            <option value="32" selected>32 bit</option>
+            <option value="64">64 bit</option>
         </select>
         <br>
         <label for="number">請輸入數字:</label>
@@ -203,6 +210,15 @@
         let currentBinary = '';
         let stepCount = 0;
 
+        // 每列位元表格最多顯示的位元數 (64 bit 會分成兩列)
+        const BITS_PER_ROW = 32;
+
+        // 輔助函數：取得目前選擇的位元寬度
+        function getBitWidth() {
+            return parseInt(document.getElementById('bitWidth').value, 10);
+        }
+
+        // 解析輸入字串，回傳 BigInt (可精確處理 64 位元)
         function parseNumberByBase(value, base) {
             const trimmedValue = value.trim();
 
@@ -211,40 +227,92 @@
             }
 
             const normalizedBase = parseInt(base, 10);
-            const sign = trimmedValue.startsWith('-') ? '-' : '';
-            const unsignedValue = sign ? trimmedValue.slice(1) : trimmedValue;
+            const isNegative = trimmedValue.startsWith('-');
+            const unsignedValue = isNegative ? trimmedValue.slice(1) : trimmedValue;
             const validators = {
                 2: /^[01]+$/,
                 10: /^[0-9]+$/,
                 16: /^[0-9a-fA-F]+$/
             };
+            const prefixes = { 2: '0b', 10: '', 16: '0x' };
 
             if (!validators[normalizedBase] || !validators[normalizedBase].test(unsignedValue)) {
                 throw new Error('invalid');
             }
 
-            return parseInt(`${sign}${unsignedValue}`, normalizedBase);
+            const magnitude = BigInt(`${prefixes[normalizedBase]}${unsignedValue}`);
+            return isNegative ? -magnitude : magnitude;
         }
 
-        // 輔助函數：生成位元表格的 HTML
+        // 輔助函數：檢查數值是否落在指定寬度可表示的範圍 (負數以二補數表示)
+        function fitsInWidth(value, width) {
+            const bigWidth = BigInt(width);
+            return value >= -(1n << (bigWidth - 1n)) && value < (1n << bigWidth);
+        }
+
+        // 輔助函數：數值超出寬度時跳出警告，並選取該輸入框要求重新輸入；回傳是否在範圍內
+        function checkWidthOrAlert(value, width, inputId) {
+            if (fitsInWidth(value, width)) {
+                return true;
+            }
+
+            const bigWidth = BigInt(width);
+            const maxValue = (1n << bigWidth) - 1n;
+            const minValue = -(1n << (bigWidth - 1n));
+            alert(`輸入值超出 ${width} bit 範圍，請重新輸入\n` +
+                  `允許範圍：${minValue} ~ ${maxValue} (0x${maxValue.toString(16).toUpperCase()})`);
+
+            const input = document.getElementById(inputId);
+            input.focus();
+            input.select();
+            return false;
+        }
+
+        // 輔助函數：將 BigInt 轉成指定寬度的二進位字串 (超出部分截斷，負數轉二補數)
+        function toBinaryString(value, width) {
+            return BigInt.asUintN(width, value).toString(2).padStart(width, '0');
+        }
+
+        // 輔助函數：二進位字串轉 BigInt
+        function binaryToBigInt(binaryString) {
+            return BigInt(`0b${binaryString}`);
+        }
+
+        // 輔助函數：產生某個二進位值的十進位與十六進位顯示
+        function valueSummaryHTML(binaryString, labelPrefix = '') {
+            const value = binaryToBigInt(binaryString);
+            return `
+                <div class="decimal-value">**${labelPrefix}十進位:** ${value}</div>
+                <div class="hex-value">**${labelPrefix}十六進位:** 0x${value.toString(16).toUpperCase()}</div>
+            `;
+        }
+
+        // 輔助函數：生成位元表格的 HTML (超過 32 位元時分成多列，每格寬度固定)
         function createBitTableHTML(binaryString, highlightIndex = -1) {
             const bitLength = binaryString.length;
-            const bitNumbers = Array.from({length: bitLength}, (_, i) => bitLength - 1 - i);
+            let html = '';
 
-            let bitTable = '<table class="bit-table"><tr>';
-            // 輸出位元位置 (Bit Position)
-            bitNumbers.forEach(num => {
-                bitTable += `<th>${num}</th>`;
-            });
-            bitTable += '</tr><tr>';
-            // 輸出位元值 (Bit Value)
-            binaryString.split('').forEach((bit, index) => {
-                const isHighlight = index === highlightIndex;
-                const className = isHighlight ? 'changed-bit' : '';
-                bitTable += `<td class="${className}">${bit}</td>`;
-            });
-            bitTable += '</tr></table>';
-            return bitTable;
+            for (let rowStart = 0; rowStart < bitLength; rowStart += BITS_PER_ROW) {
+                const rowBits = binaryString.slice(rowStart, rowStart + BITS_PER_ROW);
+                const tableWidth = (rowBits.length / BITS_PER_ROW) * 100;
+
+                let bitTable = `<table class="bit-table" style="width: ${tableWidth}%"><tr>`;
+                // 輸出位元位置 (Bit Position)
+                rowBits.split('').forEach((_, i) => {
+                    bitTable += `<th>${bitLength - 1 - (rowStart + i)}</th>`;
+                });
+                bitTable += '</tr><tr>';
+                // 輸出位元值 (Bit Value)
+                rowBits.split('').forEach((bit, i) => {
+                    const isHighlight = rowStart + i === highlightIndex;
+                    const className = isHighlight ? 'changed-bit' : '';
+                    bitTable += `<td class="${className}">${bit}</td>`;
+                });
+                bitTable += '</tr></table>';
+                html += bitTable;
+            }
+
+            return html;
         }
 
         // 輔助函數：清除所有輸出結果
@@ -266,45 +334,75 @@
             step.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
+        // 0. 變更位元寬度
+        function changeBitWidth() {
+            const width = getBitWidth();
+
+            // 同步更新輸入框的允許範圍
+            document.getElementById('bitPosition').max = width - 1;
+            document.getElementById('shiftAmount').max = width;
+
+            if (currentBinary === '' || currentBinary.length === width) {
+                return;
+            }
+
+            // 已有基準數值時，將其轉換為新寬度 (變窄截斷高位元，變寬高位補 0)
+            const previousBinary = currentBinary;
+            const value = binaryToBigInt(previousBinary);
+            const newBinary = toBinaryString(value, width);
+            const truncated = !fitsInWidth(value, width);
+
+            const contentHTML = `
+                <div class="binary-value">**Before - ${previousBinary.length} bit:**</div>
+                ${createBitTableHTML(previousBinary)}
+                ${valueSummaryHTML(previousBinary, 'Before ')}
+                <div class="binary-value">**After - ${width} bit:**</div>
+                ${createBitTableHTML(newBinary)}
+                ${valueSummaryHTML(newBinary, 'After ')}
+                ${truncated
+                    ? `<p>⚠️ 數值超出 ${width} bit 範圍，高位元已被截斷。</p>`
+                    : `<p>✅ 基準數值已轉換為 ${width} bit。</p>`}
+            `;
+
+            displayResult(`位元寬度變更 (${previousBinary.length} → ${width} bit)`, contentHTML);
+            currentBinary = newBinary;
+        }
+
         // 1. 進位轉換
         function convertAndDisplay() {
             const base = document.getElementById('base').value;
             const number = document.getElementById('number').value.trim();
-            
+            const width = getBitWidth();
+
             if (!number) {
                 alert('請輸入數字');
                 return;
             }
 
-            let decimalValue;
+            let inputValue;
             try {
-                decimalValue = parseNumberByBase(number, base);
+                inputValue = parseNumberByBase(number, base);
             } catch (e) {
                 alert('輸入無效，請檢查數字和進位制是否匹配');
                 return;
             }
 
-            if (isNaN(decimalValue)) {
-                alert('請輸入有效的數字');
+            // 超出寬度時要求重新輸入，不設定基準數值
+            if (!checkWidthOrAlert(inputValue, width, 'number')) {
                 return;
             }
-            
-            // 使用 >>> 0 確保是 32 位元無符號整數，避免大數溢位問題
-            const normalizedDecimal = decimalValue >>> 0; 
-            
-            currentBinary = normalizedDecimal.toString(2).padStart(32, '0');
-            const hexValue = normalizedDecimal.toString(16).toUpperCase();
 
-            const bitTable = createBitTableHTML(currentBinary);
+            // 依選擇的寬度轉成無號整數 (負數以二補數表示)
+            currentBinary = toBinaryString(inputValue, width);
+            const currentValue = binaryToBigInt(currentBinary);
 
             const contentHTML = `
-                <div class="binary-value">**輸入值二進位:**</div>
-                ${bitTable}
-                <div class="decimal-value">**十進位:** ${normalizedDecimal}</div>
-                <div class="hex-value">**十六進位:** 0x${hexValue}</div>
-                <p>⚠️ 注意：此值 (${normalizedDecimal}) 已設定為後續位元操作的基準數值。</p>
+                <div class="binary-value">**輸入值二進位 (${width} bit):**</div>
+                ${createBitTableHTML(currentBinary)}
+                ${valueSummaryHTML(currentBinary)}
+                <p>⚠️ 注意：此值 (${currentValue}) 已設定為後續位元操作的基準數值。</p>
             `;
-            
+
             displayResult('進位轉換結果 (基準數值)', contentHTML);
         }
 
@@ -312,62 +410,52 @@
         function changeBit() {
             const bitPositionInput = document.getElementById('bitPosition').value.trim();
             const bitPosition = Number(bitPositionInput);
-            
+
             if (currentBinary === '') {
                 alert('請先進行進位轉換以設定基準數值');
                 return;
             }
-            
+
             const bitLength = currentBinary.length;
-            // 只接受 0 ~ 31 的整數 (拒絕空白、負數、小數)
+            // 只接受 0 ~ (寬度 - 1) 的整數 (拒絕空白、負數、小數)
             if (bitPositionInput === '' || !Number.isInteger(bitPosition) || bitPosition < 0 || bitPosition >= bitLength) {
                 alert(`請輸入有效的位元位置 (0 到 ${bitLength - 1})`);
                 return;
             }
-            
+
             const stringIndex = bitLength - 1 - bitPosition;
             const previousBinary = currentBinary;
-            const previousDecimal = parseInt(previousBinary, 2);
-            const previousHex = previousDecimal.toString(16).toUpperCase();
 
             let newBinaryArray = currentBinary.split('');
             const originalBit = newBinaryArray[stringIndex];
             newBinaryArray[stringIndex] = originalBit === '0' ? '1' : '0';
             const newBinary = newBinaryArray.join('');
 
-            const newDecimal = parseInt(newBinary, 2);
-            const newHex = newDecimal.toString(16).toUpperCase();
-
-            const beforeBitTable = createBitTableHTML(previousBinary, stringIndex);
-            const afterBitTable = createBitTableHTML(newBinary, stringIndex);
-
             const contentHTML = `
                 <div class="binary-value">**Before - 改變位元前二進位:**</div>
-                ${beforeBitTable}
-                <div class="decimal-value">**Before 十進位:** ${previousDecimal}</div>
-                <div class="hex-value">**Before 十六進位:** 0x${previousHex}</div>
+                ${createBitTableHTML(previousBinary, stringIndex)}
+                ${valueSummaryHTML(previousBinary, 'Before ')}
                 <div class="binary-value">**After - 改變位元後二進位:**</div>
-                ${afterBitTable}
-                <div class="decimal-value">**After 十進位:** ${newDecimal}</div>
-                <div class="hex-value">**After 十六進位:** 0x${newHex}</div>
+                ${createBitTableHTML(newBinary, stringIndex)}
+                ${valueSummaryHTML(newBinary, 'After ')}
                 <p>✅ 已將位元 ${bitPosition} 從 ${originalBit} 改變為 ${newBinaryArray[stringIndex]}。</p>
             `;
-            
+
             displayResult('改變位元操作結果', contentHTML);
-            currentBinary = newBinary; 
+            currentBinary = newBinary;
         }
 
         // 3. 位移操作
         function shift(direction) {
             const shiftAmountInput = document.getElementById('shiftAmount').value.trim();
             const shiftAmount = Number(shiftAmountInput);
-            
+
             if (currentBinary === '') {
                 alert('請先進行進位轉換以設定基準數值');
                 return;
             }
 
-            // 只接受 0 ~ 32 的整數 (拒絕空白、負數、小數)
+            // 只接受 0 ~ 寬度 的整數 (拒絕空白、負數、小數)
             if (shiftAmountInput === '' || !Number.isInteger(shiftAmount) || shiftAmount < 0 || shiftAmount > currentBinary.length) {
                 alert(`請輸入有效的位移數 (0 到 ${currentBinary.length})`);
                 return;
@@ -376,36 +464,26 @@
             let newBinary;
             const bitLength = currentBinary.length;
             const previousBinary = currentBinary;
-            const previousDecimal = parseInt(previousBinary, 2);
-            const previousHex = previousDecimal.toString(16).toUpperCase();
-            
+
             if (direction === 'left') {
                 newBinary = currentBinary.slice(shiftAmount).padEnd(bitLength, '0');
             } else { // 'right'
                 newBinary = currentBinary.slice(0, bitLength - shiftAmount).padStart(bitLength, '0');
             }
 
-            const newDecimal = parseInt(newBinary, 2);
-            const newHex = newDecimal.toString(16).toUpperCase();
-
-            const beforeBitTable = createBitTableHTML(previousBinary);
-            const afterBitTable = createBitTableHTML(newBinary);
-
             const directionText = direction === 'left' ? '左' : '右';
             const operator = direction === 'left' ? '<<' : '>>';
 
             const contentHTML = `
                 <div class="binary-value">**Before - 位移前二進位:**</div>
-                ${beforeBitTable}
-                <div class="decimal-value">**Before 十進位:** ${previousDecimal}</div>
-                <div class="hex-value">**Before 十六進位:** 0x${previousHex}</div>
+                ${createBitTableHTML(previousBinary)}
+                ${valueSummaryHTML(previousBinary, 'Before ')}
                 <div class="binary-value">**After - ${operator} ${shiftAmount} 位後二進位:**</div>
-                ${afterBitTable}
-                <div class="decimal-value">**After 十進位:** ${newDecimal}</div>
-                <div class="hex-value">**After 十六進位:** 0x${newHex}</div>
+                ${createBitTableHTML(newBinary)}
+                ${valueSummaryHTML(newBinary, 'After ')}
                 <p>✅ 數值已向${directionText}移位 ${shiftAmount} 位。</p>
             `;
-            
+
             displayResult(`位移操作結果 (向${directionText}移位)`, contentHTML);
             currentBinary = newBinary;
         }
@@ -433,87 +511,87 @@
                 return;
             }
 
-            let firstDecimal;
-            let secondDecimal;
+            let firstValue;
+            let secondValue;
 
             try {
-                firstDecimal = parseNumberByBase(firstNumberStr, firstBase);
-                secondDecimal = parseNumberByBase(secondNumberStr, secondBase);
+                firstValue = parseNumberByBase(firstNumberStr, firstBase);
+                secondValue = parseNumberByBase(secondNumberStr, secondBase);
             } catch (e) {
                 alert('輸入無效，請檢查數字和進位制是否匹配');
                 return;
             }
 
-            if (isNaN(firstDecimal) || isNaN(secondDecimal)) {
-                alert('請輸入有效的數字');
-                return;
-            }
-
-            if (operation === '/' && secondDecimal === 0) {
+            if (operation === '/' && secondValue === 0n) {
                 alert('除數不能為 0');
                 return;
             }
-            
-            let result;
-            switch (operation) {
-                case 'AND':
-                    result = (firstDecimal >>> 0) & (secondDecimal >>> 0);
-                    break;
-                case 'OR':
-                    result = (firstDecimal >>> 0) | (secondDecimal >>> 0);
-                    break;
-                case 'XOR':
-                    result = (firstDecimal >>> 0) ^ (secondDecimal >>> 0);
-                    break;
-                case '+':
-                    result = firstDecimal + secondDecimal;
-                    break;
-                case '-':
-                    result = firstDecimal - secondDecimal;
-                    break;
-                case '*':
-                    result = firstDecimal * secondDecimal;
-                    break;
-                case '/':
-                    result = firstDecimal / secondDecimal;
-                    break;
-                default:
-                    alert('不支援的運算類型');
-                    return;
-            }
 
+            const expressionHTML = `<p>計算: (${firstNumberStr}<sub>${firstBase}</sub> ${operationSymbol} ${secondNumberStr}<sub>${secondBase}</sub>)</p>`;
+
+            // 位元運算：依選擇的寬度處理
             if (isBitwiseOperation) {
-                const normalizedFirst = firstDecimal >>> 0;
-                const normalizedSecond = secondDecimal >>> 0;
-                const normalizedResult = result >>> 0;
-                const resultBinary = normalizedResult.toString(2).padStart(32, '0');
-                const resultHex = normalizedResult.toString(16).toUpperCase();
-                const firstBinary = normalizedFirst.toString(2).padStart(32, '0');
-                const secondBinary = normalizedSecond.toString(2).padStart(32, '0');
+                const width = getBitWidth();
+
+                // 超出寬度時要求重新輸入
+                if (!checkWidthOrAlert(firstValue, width, 'firstNumber') ||
+                    !checkWidthOrAlert(secondValue, width, 'secondNumber')) {
+                    return;
+                }
+
+                const firstBinary = toBinaryString(firstValue, width);
+                const secondBinary = toBinaryString(secondValue, width);
+                const a = binaryToBigInt(firstBinary);
+                const b = binaryToBigInt(secondBinary);
+                const result = { 'AND': a & b, 'OR': a | b, 'XOR': a ^ b }[operation];
+                const resultBinary = toBinaryString(result, width);
 
                 const contentHTML = `
-                    <p>計算: (${firstNumberStr}<sub>${firstBase}</sub> ${operationSymbol} ${secondNumberStr}<sub>${secondBase}</sub>)</p>
+                    ${expressionHTML}
                     <div class="binary-value">**第一個數字二進位:**</div>
                     ${createBitTableHTML(firstBinary)}
                     <div class="binary-value">**${operationSymbol} 第二個數字二進位:**</div>
                     ${createBitTableHTML(secondBinary)}
                     <div class="binary-value">**結果二進位:**</div>
                     ${createBitTableHTML(resultBinary)}
-                    <div class="decimal-value">**十進位:** ${normalizedResult}</div>
-                    <div class="hex-value">**十六進位:** 0x${resultHex}</div>
+                    ${valueSummaryHTML(resultBinary)}
                 `;
 
-                displayResult(`位元運算結果 (${operation})`, contentHTML);
+                displayResult(`位元運算結果 (${operation}, ${width} bit)`, contentHTML);
                 return;
             }
 
-            const isIntegerResult = Number.isInteger(result);
-            const absoluteIntegerResult = Math.abs(Math.trunc(result));
-            const resultBinary = isIntegerResult ? `${result < 0 ? '-' : ''}${absoluteIntegerResult.toString(2)}` : '非整數結果不提供二進位';
-            const resultHex = isIntegerResult ? `${result < 0 ? '-' : ''}${absoluteIntegerResult.toString(16).toUpperCase()}` : '非整數結果不提供十六進位';
+            // 四則運算：以 BigInt 精確計算，不受位元寬度限制
+            let result;
+            switch (operation) {
+                case '+':
+                    result = firstValue + secondValue;
+                    break;
+                case '-':
+                    result = firstValue - secondValue;
+                    break;
+                case '*':
+                    result = firstValue * secondValue;
+                    break;
+                case '/':
+                    // 整除時保持整數，否則以浮點數顯示
+                    result = firstValue % secondValue === 0n
+                        ? firstValue / secondValue
+                        : Number(firstValue) / Number(secondValue);
+                    break;
+                default:
+                    alert('不支援的運算類型');
+                    return;
+            }
+
+            const isIntegerResult = typeof result === 'bigint';
+            const sign = isIntegerResult && result < 0n ? '-' : '';
+            const absoluteResult = isIntegerResult ? (result < 0n ? -result : result) : null;
+            const resultBinary = isIntegerResult ? `${sign}${absoluteResult.toString(2)}` : '非整數結果不提供二進位';
+            const resultHex = isIntegerResult ? `${sign}${absoluteResult.toString(16).toUpperCase()}` : '非整數結果不提供十六進位';
 
             const contentHTML = `
-                <p>計算: (${firstNumberStr}<sub>${firstBase}</sub> ${operationSymbol} ${secondNumberStr}<sub>${secondBase}</sub>)</p>
+                ${expressionHTML}
                 <div class="decimal-value">十進位結果: ${result}</div>
                 <div class="hex-value">二進位結果: ${resultBinary}</div>
                 <div class="hex-value">十六進位結果: ${resultHex}</div>
@@ -539,14 +617,10 @@
 
             // 若已有基準數值，清除後立即顯示目前數值，避免使用者忘記
             if (currentBinary !== '') {
-                const currentDecimal = parseInt(currentBinary, 2);
-                const currentHex = currentDecimal.toString(16).toUpperCase();
-
                 const contentHTML = `
-                    <div class="binary-value">**目前數值二進位:**</div>
+                    <div class="binary-value">**目前數值二進位 (${currentBinary.length} bit):**</div>
                     ${createBitTableHTML(currentBinary)}
-                    <div class="decimal-value">**十進位:** ${currentDecimal}</div>
-                    <div class="hex-value">**十六進位:** 0x${currentHex}</div>
+                    ${valueSummaryHTML(currentBinary)}
                     <p>ℹ️ 輸出畫面已清除，後續位元操作將從此數值繼續。</p>
                 `;
 
@@ -568,6 +642,9 @@
             clearValues();
             alert('輸出畫面與數值已全部清除');
         }
+
+        // 頁面載入時依預設寬度設定輸入框範圍 (瀏覽器可能保留上次選擇的寬度)
+        changeBitWidth();
     </script>
 </body>
 </html>
