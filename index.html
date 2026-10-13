@@ -18,6 +18,12 @@
             font-size: 0.9em; 
             border: 1px solid #aaa;
         }
+
+        /* 統一文字與數字輸入框寬度 (數字輸入框預設較窄) */
+        input[type="text"], input[type="number"] {
+            width: 14em;
+            box-sizing: border-box;
+        }
         
         /* 讓按鈕的尺寸適中 */
         button {
@@ -66,6 +72,12 @@
             border-bottom: 5px solid #ccc;
             padding-bottom: 12px;
             color: #333;
+        }
+        /* 每個操作步驟之間的分隔 */
+        .result-step + .result-step {
+            margin-top: 40px;
+            padding-top: 30px;
+            border-top: 4px dashed #999;
         }
         .decimal-value, .hex-value {
             margin-top: 18px;
@@ -134,14 +146,14 @@
     <div class="output-section">
         <h2>改變位元操作</h2>
         <label for="bitPosition">請輸入要改變的位元位置 (從0開始):</label>
-        <input type="number" id="bitPosition"> 
+        <input type="number" id="bitPosition" min="0" max="31" step="1">
         <button onclick="changeBit()">改變位元</button>
     </div>
 
     <div class="output-section">
         <h2>位移操作</h2>
         <label for="shiftAmount">請輸入要位移的數字:</label>
-        <input type="number" id="shiftAmount"> 
+        <input type="number" id="shiftAmount" min="0" max="32" step="1">
         <button onclick="shiftLeft()">向左移位</button>
         <button onclick="shiftRight()">向右移位</button>
     </div>
@@ -175,7 +187,9 @@
         <button onclick="performDualNumberOperation()">計算</button>
     </div>
 
-    <button onclick="resetAll()">清除輸出畫面與數值</button>
+    <button onclick="resetOutput()">僅清除輸出畫面</button>
+    <button onclick="resetValues()">清除數值</button>
+    <button onclick="resetAll()">清除全部</button>
 
     <div class="result-container" id="allResults">
         </div>
@@ -186,7 +200,8 @@
     <div class="result bitwise-operation-result" id="bitwiseOperationResult"></div>
 
     <script>
-        let currentBinary = ''; 
+        let currentBinary = '';
+        let stepCount = 0;
 
         function parseNumberByBase(value, base) {
             const trimmedValue = value.trim();
@@ -235,15 +250,20 @@
         // 輔助函數：清除所有輸出結果
         function clearResults() {
             document.getElementById('allResults').innerHTML = '';
+            stepCount = 0;
         }
 
-        // 輔助函數：顯示結果到統一的區塊
+        // 輔助函數：將結果加到統一區塊的最上方，保留先前每個步驟 (越新越上面)
         function displayResult(title, contentHTML) {
-            clearResults();
-            document.getElementById('allResults').innerHTML = `
-                <div class="result-title">🎯 ${title}</div>
+            stepCount++;
+            const step = document.createElement('div');
+            step.className = 'result-step';
+            step.innerHTML = `
+                <div class="result-title">🎯 步驟 ${stepCount}：${title}</div>
                 ${contentHTML}
             `;
+            document.getElementById('allResults').prepend(step);
+            step.scrollIntoView({ behavior: 'smooth', block: 'start' });
         }
 
         // 1. 進位轉換
@@ -290,7 +310,8 @@
 
         // 2. 改變位元
         function changeBit() {
-            const bitPosition = parseInt(document.getElementById('bitPosition').value);
+            const bitPositionInput = document.getElementById('bitPosition').value.trim();
+            const bitPosition = Number(bitPositionInput);
             
             if (currentBinary === '') {
                 alert('請先進行進位轉換以設定基準數值');
@@ -298,7 +319,8 @@
             }
             
             const bitLength = currentBinary.length;
-            if (isNaN(bitPosition) || bitPosition < 0 || bitPosition >= bitLength) {
+            // 只接受 0 ~ 31 的整數 (拒絕空白、負數、小數)
+            if (bitPositionInput === '' || !Number.isInteger(bitPosition) || bitPosition < 0 || bitPosition >= bitLength) {
                 alert(`請輸入有效的位元位置 (0 到 ${bitLength - 1})`);
                 return;
             }
@@ -337,14 +359,16 @@
 
         // 3. 位移操作
         function shift(direction) {
-            const shiftAmount = parseInt(document.getElementById('shiftAmount').value);
+            const shiftAmountInput = document.getElementById('shiftAmount').value.trim();
+            const shiftAmount = Number(shiftAmountInput);
             
             if (currentBinary === '') {
                 alert('請先進行進位轉換以設定基準數值');
                 return;
             }
 
-            if (isNaN(shiftAmount) || shiftAmount < 0 || shiftAmount > currentBinary.length) {
+            // 只接受 0 ~ 32 的整數 (拒絕空白、負數、小數)
+            if (shiftAmountInput === '' || !Number.isInteger(shiftAmount) || shiftAmount < 0 || shiftAmount > currentBinary.length) {
                 alert(`請輸入有效的位移數 (0 到 ${currentBinary.length})`);
                 return;
             }
@@ -358,7 +382,7 @@
             if (direction === 'left') {
                 newBinary = currentBinary.slice(shiftAmount).padEnd(bitLength, '0');
             } else { // 'right'
-                newBinary = currentBinary.slice(0, -shiftAmount).padStart(bitLength, '0');
+                newBinary = currentBinary.slice(0, bitLength - shiftAmount).padStart(bitLength, '0');
             }
 
             const newDecimal = parseInt(newBinary, 2);
@@ -498,16 +522,51 @@
             displayResult('混合進位計算結果', contentHTML);
         }
 
-        // 5. 清除所有
-        function resetAll() {
-            clearResults();
-            document.getElementById('number').value = ''; 
+        // 5. 清除功能
+        // 輔助函數：清除所有輸入欄位與基準數值
+        function clearValues() {
+            document.getElementById('number').value = '';
             document.getElementById('bitPosition').value = '';
             document.getElementById('shiftAmount').value = '';
             document.getElementById('firstNumber').value = '';
             document.getElementById('secondNumber').value = '';
             currentBinary = '';
-            alert('輸出畫面與基準數值已清除');
+        }
+
+        // 僅清除輸出畫面 (保留輸入欄位與基準數值，可繼續操作)
+        function resetOutput() {
+            clearResults();
+
+            // 若已有基準數值，清除後立即顯示目前數值，避免使用者忘記
+            if (currentBinary !== '') {
+                const currentDecimal = parseInt(currentBinary, 2);
+                const currentHex = currentDecimal.toString(16).toUpperCase();
+
+                const contentHTML = `
+                    <div class="binary-value">**目前數值二進位:**</div>
+                    ${createBitTableHTML(currentBinary)}
+                    <div class="decimal-value">**十進位:** ${currentDecimal}</div>
+                    <div class="hex-value">**十六進位:** 0x${currentHex}</div>
+                    <p>ℹ️ 輸出畫面已清除，後續位元操作將從此數值繼續。</p>
+                `;
+
+                displayResult('目前基準數值', contentHTML);
+            }
+
+            alert('輸出畫面已清除');
+        }
+
+        // 僅清除數值 (保留輸出畫面)
+        function resetValues() {
+            clearValues();
+            alert('輸入數值與基準數值已清除');
+        }
+
+        // 清除全部
+        function resetAll() {
+            clearResults();
+            clearValues();
+            alert('輸出畫面與數值已全部清除');
         }
     </script>
 </body>
